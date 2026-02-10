@@ -1,13 +1,13 @@
 import datetime
-import tempfile
 from pathlib import Path
 
 from PyQt5.QtCore import QThread, pyqtSignal
 
 from app.core.asr import transcribe
 from app.core.entities import TranscribeOutputFormatEnum, TranscribeTask
+from app.core.utils.cache import get_audio_cache_dir
 from app.core.utils.logger import setup_logger
-from app.core.utils.video_utils import video2audio
+from app.core.utils.video_utils import extract_audio_with_cache
 
 logger = setup_logger("transcript_thread")
 
@@ -86,30 +86,22 @@ class TranscriptThread(QThread):
         self.progress.emit(5, self.tr("转换音频中"))
         logger.info("开始转换音频")
 
-        # 创建临时音频文件（delete=False 避免 Windows 权限问题）
-        temp_audio_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-        temp_audio_path = temp_audio_file.name
-        temp_audio_file.close()  # 立即关闭文件句柄，让 ffmpeg 可以写入
-
+        audio_path = None
         try:
             # 转换音频文件
             # 获取选中的音轨索引（如果有）
             audio_track_index = self.task.selected_audio_track_index
-            is_success = video2audio(
+            audio_path = extract_audio_with_cache(
                 str(video_path),
-                output=temp_audio_path,
                 audio_track_index=audio_track_index,
             )
-            if not is_success:
-                logger.error("音频转换失败")
-                raise RuntimeError(self.tr("音频转换失败"))
 
             self.progress.emit(20, self.tr("语音转录中"))
             logger.info("开始语音转录")
 
             # 进行转录
             asr_data = transcribe(
-                temp_audio_path,
+                audio_path,
                 self.task.transcribe_config,
                 callback=self.progress_callback,
             )
@@ -142,7 +134,8 @@ class TranscriptThread(QThread):
             self.progress.emit(100, self.tr("转录完成"))
             self.finished.emit(self.task)
         finally:
-            Path(temp_audio_path).unlink(missing_ok=True)
+            if audio_path and Path(audio_path).parent != get_audio_cache_dir():
+                Path(audio_path).unlink(missing_ok=True)
 
     def progress_callback(self, value, message):
         progress = min(20 + (value * 0.8), 100)

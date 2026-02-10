@@ -8,6 +8,7 @@ import functools
 import hashlib
 import json
 from dataclasses import asdict, is_dataclass
+from pathlib import Path
 from typing import Any
 
 from diskcache import Cache
@@ -66,6 +67,13 @@ def get_tts_cache() -> Cache:
 def get_version_state_cache() -> Cache:
     """Get version check state cache instance."""
     return _version_state_cache
+
+
+def get_audio_cache_dir() -> Path:
+    """Get audio cache directory."""
+    path = CACHE_PATH / "audio_cache"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def memoize(cache_instance: Cache, **kwargs):

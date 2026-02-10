@@ -1,5 +1,6 @@
 import os
 import re
+import hashlib
 import shutil
 import subprocess
 import tempfile
@@ -7,6 +8,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Literal, Optional
 
+from app.core.utils.cache import get_audio_cache_dir, is_cache_enabled
 from ..entities import (
     AudioStreamInfo,
     SubtitleLayoutEnum,
@@ -62,6 +64,56 @@ def temporary_subtitle_file(subtitle_path: str):
     finally:
         # 自动清理临时文件
         Path(temp_path).unlink(missing_ok=True)
+
+
+def _generate_audio_cache_key(file_path: str, audio_track_index: int) -> str:
+    """Generate unique cache key for audio extraction."""
+    path_obj = Path(file_path)
+    stat = path_obj.stat()
+
+    # Use file path, size, modification time, and track index for key
+    key_data = f"{path_obj.absolute()}_{stat.st_size}_{stat.st_mtime}_{audio_track_index}"
+    return hashlib.md5(key_data.encode()).hexdigest()
+
+
+def extract_audio_with_cache(input_file: str, audio_track_index: int = 0) -> str:
+    """Extract audio from video with caching support.
+
+    Args:
+        input_file: Input video file path
+        audio_track_index: Audio track index to extract
+
+    Returns:
+        Path to the extracted audio file (cached)
+
+    Raises:
+        RuntimeError: If audio extraction fails
+    """
+    # If cache is disabled, use a temporary file
+    if not is_cache_enabled():
+        temp_fd, temp_path = tempfile.mkstemp(suffix=".wav", prefix="VideoCaptioner_audio_")
+        os.close(temp_fd)
+        if video2audio(input_file, temp_path, audio_track_index):
+            return temp_path
+        Path(temp_path).unlink(missing_ok=True)
+        raise RuntimeError("Audio extraction failed")
+
+    # Generate cache key and path
+    cache_key = _generate_audio_cache_key(input_file, audio_track_index)
+    cache_dir = get_audio_cache_dir()
+    cache_path = cache_dir / f"{cache_key}.wav"
+
+    # Check if exists
+    if cache_path.exists():
+        logger.info(f"Found cached audio: {cache_path}")
+        return str(cache_path)
+
+    # Extract
+    logger.info(f"Extracting audio to cache: {cache_path}")
+    if video2audio(input_file, str(cache_path), audio_track_index):
+        return str(cache_path)
+
+    raise RuntimeError("Audio extraction failed")
 
 
 def video2audio(input_file: str, output: str = "", audio_track_index: int = 0) -> bool:
