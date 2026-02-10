@@ -99,7 +99,24 @@ class WhisperCppASR(BaseASR):
                 or text.startswith("（")
             ):
                 filtered_segments.append(seg)
-        return filtered_segments
+                
+        if not filtered_segments:
+            return []
+
+        # 合并重复的字幕片段
+        merged_segments = []
+        current_seg = filtered_segments[0]
+
+        for next_seg in filtered_segments[1:]:
+            if current_seg.text.strip() == next_seg.text.strip():
+                # 如果文本相同，合并片段（更新结束时间）
+                current_seg.end_time = next_seg.end_time
+            else:
+                merged_segments.append(current_seg)
+                current_seg = next_seg
+
+        merged_segments.append(current_seg)
+        return merged_segments
 
     def _build_command(
         self, wav_path, output_path, is_const_me_version: bool
