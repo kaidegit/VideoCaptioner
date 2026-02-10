@@ -837,12 +837,63 @@ class SubtitleInterface(QWidget):
         )
 
     def on_partial_finished(self) -> None:
+        # Save updates to file
+        self._save_current_subtitle()
+
         InfoBar.success(
             self.tr("处理完成"),
-            self.tr("选中的字幕已更新"),
+            self.tr("选中的字幕已更新并保存"),
             duration=INFOBAR_DURATION_SUCCESS,
             parent=self,
         )
+
+    def _save_current_subtitle(self) -> None:
+        """保存当前字幕数据到文件"""
+        if not self.model._data:
+            return
+
+        try:
+            # 1. Reconstruct ASRData
+            asr_data = ASRData.from_json(self.model._data)
+
+            # 2. Determine save paths
+            save_paths = []
+
+            # Primary output path
+            if self.task and self.task.output_path:
+                save_paths.append((self.task.output_path, cfg.subtitle_layout.value))
+            elif self.subtitle_path:
+                save_paths.append((self.subtitle_path, cfg.subtitle_layout.value))
+
+            # Sidecar files (like SubtitleThread step 6)
+            if self.task and self.task.need_next_task and self.task.video_path:
+                video_dir = Path(self.task.video_path).parent
+                stem = Path(self.task.video_path).stem
+
+                # Save .srt
+                srt_path = str(video_dir / f"{stem}.srt")
+                save_paths.append((srt_path, cfg.subtitle_layout.value))
+
+                # Save .ass
+                ass_path = str(video_dir / f"{stem}.ass")
+                save_paths.append((ass_path, cfg.subtitle_layout.value))
+
+            # 3. Save to all paths
+            style_name = cfg.subtitle_style_name.value
+            ass_style = TaskFactory.get_ass_style(style_name)
+
+            for path, layout in save_paths:
+                if not path:
+                    continue
+                asr_data.save(save_path=path, ass_style=ass_style, layout=layout)
+
+        except Exception as e:
+            InfoBar.error(
+                self.tr("保存失败"),
+                self.tr(f"自动保存失败: {e}"),
+                duration=INFOBAR_DURATION_ERROR,
+                parent=self,
+            )
 
     def merge_selected_rows(self, rows: List[int]) -> None:
         """合并选中的字幕行"""
