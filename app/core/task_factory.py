@@ -105,30 +105,8 @@ class TaskFactory:
         return task
 
     @staticmethod
-    def create_subtitle_task(
-        file_path: str,
-        video_path: Optional[str] = None,
-        need_next_task: bool = False,
-        task_id: Optional[str] = None,
-    ) -> SubtitleTask:
-        """创建字幕任务"""
-        output_name = (
-            Path(file_path).stem.replace("【原始字幕】", "").replace("【下载字幕】", "")
-        )
-        # 只在需要翻译时添加翻译服务后缀
-        suffix = (
-            f"-{cfg.translator_service.value.value}" if cfg.need_translate.value else ""
-        )
-
-        if need_next_task:
-            output_path = str(
-                Path(file_path).parent / f"【样式字幕】{output_name}{suffix}.ass"
-            )
-        else:
-            output_path = str(
-                Path(file_path).parent / f"【字幕】{output_name}{suffix}.srt"
-            )
-
+    def create_subtitle_config() -> SubtitleConfig:
+        """从全局配置创建字幕配置对象"""
         # 根据当前选择的LLM服务获取对应的配置
         current_service = cfg.llm_service.value
         if current_service == LLMServiceEnum.OPENAI:
@@ -164,7 +142,7 @@ class TaskFactory:
             api_key = ""
             llm_model = ""
 
-        config = SubtitleConfig(
+        return SubtitleConfig(
             # 翻译配置
             base_url=base_url,
             api_key=api_key,
@@ -179,7 +157,7 @@ class TaskFactory:
             thread_num=cfg.thread_num.value,
             batch_size=cfg.batch_size.value,
             # 字幕布局、样式
-            subtitle_layout=cfg.subtitle_layout.value,  # Now returns SubtitleLayoutEnum
+            subtitle_layout=cfg.subtitle_layout.value,
             subtitle_style=TaskFactory.get_ass_style(cfg.subtitle_style_name.value),
             # 字幕分割
             max_word_count_cjk=cfg.max_word_count_cjk.value,
@@ -190,6 +168,33 @@ class TaskFactory:
             # 字幕提示
             custom_prompt_text=cfg.custom_prompt_text.value,
         )
+
+    @staticmethod
+    def create_subtitle_task(
+        file_path: str,
+        video_path: Optional[str] = None,
+        need_next_task: bool = False,
+        task_id: Optional[str] = None,
+    ) -> SubtitleTask:
+        """创建字幕任务"""
+        output_name = (
+            Path(file_path).stem.replace("【原始字幕】", "").replace("【下载字幕】", "")
+        )
+        # 只在需要翻译时添加翻译服务后缀
+        suffix = (
+            f"-{cfg.translator_service.value.value}" if cfg.need_translate.value else ""
+        )
+
+        if need_next_task:
+            output_path = str(
+                Path(file_path).parent / f"【样式字幕】{output_name}{suffix}.ass"
+            )
+        else:
+            output_path = str(
+                Path(file_path).parent / f"【字幕】{output_name}{suffix}.srt"
+            )
+
+        config = TaskFactory.create_subtitle_config()
 
         task = SubtitleTask(
             queued_at=datetime.datetime.now(),

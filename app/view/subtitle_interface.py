@@ -50,12 +50,13 @@ from app.core.entities import (
     SubtitleLayoutEnum,
     SubtitleTask,
     SupportedSubtitleFormats,
+    SubtitleConfig,
 )
 from app.core.subtitle import get_subtitle_style
 from app.core.task_factory import TaskFactory
 from app.core.translate.types import TargetLanguage
 from app.core.utils.platform_utils import open_folder
-from app.thread.subtitle_thread import SubtitleThread
+from app.thread.subtitle_thread import SubtitleThread, PartialSubtitleThread
 
 
 class SubtitleTableModel(QAbstractTableModel):
@@ -740,22 +741,108 @@ class SubtitleInterface(QWidget):
             return
 
         # 添加菜单项
-        # retranslate_action = Action(FIF.SYNC, self.tr("重新翻译"))
+        retranslate_action = Action(FIF.SYNC, self.tr("重新翻译"))
+        recorrect_action = Action(FIF.EDIT, self.tr("重新校正"))
         merge_action = Action(FIF.LINK, self.tr("合并"))  # 添加快捷键提示
-        # menu.addAction(retranslate_action)
+
+        menu.addAction(retranslate_action)
+        menu.addAction(recorrect_action)
         menu.addAction(merge_action)
+
+        retranslate_action.setShortcut("Ctrl+R")
+        recorrect_action.setShortcut("Ctrl+E")
         merge_action.setShortcut("Ctrl+M")  # 设置快捷键
 
         # 设置动作状态
-        # retranslate_action.setEnabled(cfg.need_translate.value)
+        retranslate_action.setEnabled(cfg.need_translate.value)
+        recorrect_action.setEnabled(cfg.need_optimize.value)
         merge_action.setEnabled(len(rows) > 1)
 
         # 连接动作信号
-        # retranslate_action.triggered.connect(lambda: self.retranslate_selected_rows(rows))
+        retranslate_action.triggered.connect(
+            lambda: self.retranslate_selected_rows(rows)
+        )
+        recorrect_action.triggered.connect(lambda: self.recorrect_selected_rows(rows))
         merge_action.triggered.connect(lambda: self.merge_selected_rows(rows))
 
         # 显示菜单
         menu.exec(self.subtitle_table.viewport().mapToGlobal(pos))
+
+    def retranslate_selected_rows(self, rows: List[int]) -> None:
+        """重新翻译选中的行"""
+        if not rows:
+            return
+
+        data = {}
+        for row in rows:
+            key = str(row + 1)
+            if key in self.model._data:
+                data[key] = self.model._data[key]["original_subtitle"]
+
+        if not data:
+            return
+
+        self._start_partial_thread(data, "translate")
+
+    def recorrect_selected_rows(self, rows: List[int]) -> None:
+        """重新校正选中的行"""
+        if not rows:
+            return
+
+        data = {}
+        for row in rows:
+            key = str(row + 1)
+            if key in self.model._data:
+                data[key] = self.model._data[key]["original_subtitle"]
+
+        if not data:
+            return
+
+        self._start_partial_thread(data, "optimize")
+
+    def _start_partial_thread(self, data: Dict[str, str], mode: str) -> None:
+        # Create config
+        config = TaskFactory.create_subtitle_config()
+        # Ensure custom prompt text is up to date
+        config.custom_prompt_text = self.custom_prompt_text
+
+        if hasattr(self, "partial_thread") and self.partial_thread.isRunning():
+            InfoBar.warning(
+                self.tr("警告"),
+                self.tr("正在处理中，请稍候..."),
+                duration=INFOBAR_DURATION_WARNING,
+                parent=self,
+            )
+            return
+
+        self.partial_thread = PartialSubtitleThread(config, data, mode)
+        self.partial_thread.update.connect(self.update_data)
+        self.partial_thread.error.connect(self.on_partial_error)
+        self.partial_thread.finished.connect(self.on_partial_finished)
+        self.partial_thread.start()
+
+        InfoBar.info(
+            self.tr("开始处理"),
+            self.tr("正在后台处理选中的字幕..."),
+            duration=INFOBAR_DURATION_INFO,
+            parent=self,
+        )
+
+    def on_partial_error(self, error: str) -> None:
+        InfoBar.error(
+            self.tr("处理失败"),
+            self.tr(error),
+            duration=INFOBAR_DURATION_ERROR,
+            parent=self,
+        )
+
+    def on_partial_finished(self) -> None:
+        InfoBar.success(
+            self.tr("处理完成"),
+            self.tr("选中的字幕已更新"),
+            duration=INFOBAR_DURATION_SUCCESS,
+            parent=self,
+        )
 
     def merge_selected_rows(self, rows: List[int]) -> None:
         """合并选中的字幕行"""
@@ -822,14 +909,28 @@ class SubtitleInterface(QWidget):
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
         """处理键盘事件"""
-        # 处理 Ctrl+M 快捷键
-        if event.modifiers() == Qt.ControlModifier and event.key() == Qt.Key_M:  # type: ignore
-            indexes = self.subtitle_table.selectedIndexes()
-            if indexes:
-                rows = sorted(set(index.row() for index in indexes))
-                if len(rows) > 1:
-                    self.merge_selected_rows(rows)
-            event.accept()
+        if event.modifiers() == Qt.ControlModifier:
+            if event.key() == Qt.Key_M:  # Ctrl+M 合并
+                indexes = self.subtitle_table.selectedIndexes()
+                if indexes:
+                    rows = sorted(set(index.row() for index in indexes))
+                    if len(rows) > 1:
+                        self.merge_selected_rows(rows)
+                event.accept()
+            elif event.key() == Qt.Key_R:  # Ctrl+R 重新翻译
+                if cfg.need_translate.value:
+                    indexes = self.subtitle_table.selectedIndexes()
+                    if indexes:
+                        rows = sorted(set(index.row() for index in indexes))
+                        self.retranslate_selected_rows(rows)
+                event.accept()
+            elif event.key() == Qt.Key_E:  # Ctrl+E 重新校正
+                if cfg.need_optimize.value:
+                    indexes = self.subtitle_table.selectedIndexes()
+                    if indexes:
+                        rows = sorted(set(index.row() for index in indexes))
+                        self.recorrect_selected_rows(rows)
+                event.accept()
         else:
             super().keyPressEvent(event)
 

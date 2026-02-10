@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from PyQt5.QtCore import QThread, pyqtSignal
 
@@ -296,3 +296,127 @@ class SubtitleThread(QThread):
         except Exception as e:
             logger.error(f"停止线程时出错：{str(e)}")
             self.progress.emit(100, self.tr("终止时发生错误"))
+
+
+class PartialSubtitleThread(QThread):
+    """部分字幕处理线程（用于重新翻译/校正选中行）"""
+
+    update = pyqtSignal(dict)
+    error = pyqtSignal(str)
+    finished = pyqtSignal()
+
+    def __init__(self, config: SubtitleConfig, data: Dict[str, str], mode: str):
+        super().__init__()
+        self.config = config
+        self.data = data
+        self.mode = mode  # "optimize" or "translate"
+
+    def _setup_llm_config(self) -> None:
+        """设置API配置"""
+        if (
+            self.config.base_url
+            and self.config.api_key
+            and self.config.llm_model
+        ):
+            success, message = check_llm_connection(
+                self.config.base_url,
+                self.config.api_key,
+                self.config.llm_model,
+            )
+            if not success:
+                raise Exception(f"{self.tr('LLM API 测试失败: ')}{message or ''}")
+            # 设置环境变量
+            if self.config.base_url:
+                os.environ["OPENAI_BASE_URL"] = self.config.base_url
+            if self.config.api_key:
+                os.environ["OPENAI_API_KEY"] = self.config.api_key
+        else:
+            raise Exception(self.tr("LLM API 未配置, 请检查LLM配置"))
+
+    def run(self):
+        try:
+            if self.mode == "optimize":
+                if self.config.need_optimize and not self.config.llm_model:
+                     raise Exception(self.tr("LLM 模型未配置"))
+                
+                # Check LLM connection if needed
+                if self.config.need_optimize:
+                     self._setup_llm_config()
+
+                optimizer = SubtitleOptimizer(
+                    thread_num=self.config.thread_num,
+                    batch_num=self.config.batch_size,
+                    model=self.config.llm_model or "",
+                    custom_prompt=self.config.custom_prompt_text or "",
+                )
+                
+                result_dict = optimizer._optimize_chunk(self.data)
+                self.update.emit(result_dict)
+
+            elif self.mode == "translate":
+                translator_service = self.config.translator_service
+                if not self.config.target_language:
+                     raise Exception(self.tr("目标语言未配置"))
+                
+                translator = None
+                if translator_service == TranslatorServiceEnum.OPENAI:
+                    if not self.config.llm_model:
+                        raise Exception(self.tr("LLM 模型未配置"))
+                    self._setup_llm_config()
+                    translator = LLMTranslator(
+                        thread_num=self.config.thread_num,
+                        batch_num=self.config.batch_size,
+                        target_language=self.config.target_language,
+                        model=self.config.llm_model,
+                        custom_prompt=self.config.custom_prompt_text or "",
+                        is_reflect=self.config.need_reflect,
+                        update_callback=None
+                    )
+                elif translator_service == TranslatorServiceEnum.GOOGLE:
+                    translator = GoogleTranslator(
+                         thread_num=self.config.thread_num,
+                         batch_num=5,
+                         target_language=self.config.target_language,
+                         timeout=20,
+                         update_callback=None
+                    )
+                elif translator_service == TranslatorServiceEnum.BING:
+                    translator = BingTranslator(
+                        thread_num=self.config.thread_num,
+                        batch_num=10,
+                        target_language=self.config.target_language,
+                        update_callback=None
+                    )
+                elif translator_service == TranslatorServiceEnum.DEEPLX:
+                    os.environ["DEEPLX_ENDPOINT"] = self.config.deeplx_endpoint or ""
+                    translator = DeepLXTranslator(
+                        thread_num=self.config.thread_num,
+                        batch_num=5,
+                        target_language=self.config.target_language,
+                        timeout=20,
+                        update_callback=None
+                    )
+                else:
+                    raise Exception(self.tr(f"不支持的翻译服务: {translator_service}"))
+
+                # Convert dict to List[SubtitleProcessData]
+                process_data_list = [
+                    SubtitleProcessData(index=int(k), original_text=v) 
+                    for k, v in self.data.items()
+                ]
+                
+                # Call _translate_chunk
+                result_list = translator._translate_chunk(process_data_list)
+                
+                # Convert back to dict {index: translated_text}
+                result_dict = {
+                    str(item.index): item.translated_text 
+                    for item in result_list
+                }
+                self.update.emit(result_dict)
+
+            self.finished.emit()
+
+        except Exception as e:
+            logger.exception(f"Partial processing failed: {e}")
+            self.error.emit(str(e))
