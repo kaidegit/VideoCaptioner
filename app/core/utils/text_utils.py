@@ -103,3 +103,25 @@ def count_words(text: str) -> int:
     word_count = len(word_text.strip().split())
 
     return char_count + word_count
+
+
+def sanitize_text(text: str) -> str:
+    """Clean up text to prevent LLM crashes due to repetition.
+
+    Specifically removes excessively repeated character sequences which can cause
+    OpenAI API to return 400 BadRequestError.
+
+    Args:
+        text: The input text to sanitize
+
+    Returns:
+        Sanitized text with excessive repetitions truncated
+    """
+    if not text:
+        return text
+
+    # Collapse repeated sequences (char or group) that repeat >10 times
+    # This catches "a" * 100, "abc" * 100, "おー、" * 100
+    # Replace with 3 repetitions of the pattern + "..."
+    # Using lazy quantifier +? to find the shortest repeating unit
+    return re.sub(r"(.+?)\1{10,}", r"\1\1\1...", text, flags=re.DOTALL)

@@ -11,6 +11,7 @@ from app.core.prompts import get_prompt
 from app.core.translate.base import BaseTranslator, SubtitleProcessData, logger
 from app.core.translate.types import TargetLanguage
 from app.core.utils.cache import generate_cache_key
+from app.core.utils.text_utils import sanitize_text
 
 
 class LLMTranslator(BaseTranslator):
@@ -48,7 +49,9 @@ class LLMTranslator(BaseTranslator):
         )
 
         # 转换为字典格式用于API调用
-        subtitle_dict = {str(data.index): data.original_text for data in subtitle_chunk}
+        subtitle_dict = {
+            str(data.index): sanitize_text(data.original_text) for data in subtitle_chunk
+        }
 
         # 获取提示词
         if self.is_reflect:
@@ -89,6 +92,9 @@ class LLMTranslator(BaseTranslator):
             logger.error(f"OpenAI Authentication Error: {str(e)}")
         except openai.NotFoundError as e:
             logger.error(f"OpenAI NotFound Error: {str(e)}")
+        except openai.BadRequestError as e:
+            logger.error(f"OpenAI Bad Request Error (possible content filter/length issue): {str(e)}")
+            return self._translate_chunk_single(subtitle_chunk)
         except Exception as e:
             logger.exception(f"Error: {str(e)}")
             return self._translate_chunk_single(subtitle_chunk)
@@ -197,7 +203,7 @@ class LLMTranslator(BaseTranslator):
                 response = call_llm(
                     messages=[
                         {"role": "system", "content": single_prompt},
-                        {"role": "user", "content": data.original_text},
+                        {"role": "user", "content": sanitize_text(data.original_text)},
                     ],
                     model=self.model,
                     temperature=0.7,
