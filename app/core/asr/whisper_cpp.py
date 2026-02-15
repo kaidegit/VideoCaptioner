@@ -34,6 +34,11 @@ class WhisperCppASR(BaseASR):
         need_word_time_stamp: bool = False,
         enable_vad: bool = False,
         vad_model: Optional[str] = None,
+        vad_threshold: float = 0.3,
+        vad_min_speech_duration_ms: int = 150,
+        vad_min_silence_duration_ms: int = 200,
+        vad_max_speech_duration_s: int = 30,
+        vad_speech_pad_ms: int = 50,
     ):
         super().__init__(audio_input, use_cache)
 
@@ -66,6 +71,11 @@ class WhisperCppASR(BaseASR):
         self.language = language
         self.enable_vad = enable_vad
         self.vad_model_path = None
+        self.vad_threshold = vad_threshold
+        self.vad_min_speech_duration_ms = vad_min_speech_duration_ms
+        self.vad_min_silence_duration_ms = vad_min_silence_duration_ms
+        self.vad_max_speech_duration_s = vad_max_speech_duration_s
+        self.vad_speech_pad_ms = vad_speech_pad_ms
 
         if self.enable_vad:
             if vad_model:
@@ -149,6 +159,11 @@ class WhisperCppASR(BaseASR):
         if self.enable_vad and self.vad_model_path:
             whisper_params.append("--vad")
             whisper_params.extend(["-vm", str(self.vad_model_path)])
+            whisper_params.extend(["-vt", str(self.vad_threshold)])
+            whisper_params.extend(["-vspd", str(self.vad_min_speech_duration_ms)])
+            whisper_params.extend(["-vsd", str(self.vad_min_silence_duration_ms)])
+            whisper_params.extend(["-vmsd", str(self.vad_max_speech_duration_s)])
+            whisper_params.extend(["-vp", str(self.vad_speech_pad_ms)])
 
         return whisper_params
 
@@ -276,7 +291,7 @@ class WhisperCppASR(BaseASR):
                 raise RuntimeError(f"SRT generation failed: {str(e)}")
 
     def _get_key(self):
-        return f"{self.crc32_hex}-{self.need_word_time_stamp}-{self.model_path}-{self.language}-{self.enable_vad}-{self.vad_model_path}"
+        return f"{self.crc32_hex}-{self.need_word_time_stamp}-{self.model_path}-{self.language}-{self.enable_vad}-{self.vad_model_path}-{self.vad_threshold}-{self.vad_min_speech_duration_ms}-{self.vad_min_silence_duration_ms}-{self.vad_max_speech_duration_s}-{self.vad_speech_pad_ms}"
 
     def get_audio_duration(self, filepath: str) -> int:
         """Get audio file duration in seconds using ffmpeg."""
