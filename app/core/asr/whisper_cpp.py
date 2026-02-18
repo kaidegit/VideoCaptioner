@@ -109,7 +109,7 @@ class WhisperCppASR(BaseASR):
                 or text.startswith("（")
             ):
                 filtered_segments.append(seg)
-                
+
         if not filtered_segments:
             return []
 
