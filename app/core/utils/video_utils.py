@@ -223,6 +223,42 @@ def check_cuda_available() -> bool:
         return False
 
 
+def _get_subtitle_stream_count(input_file: str) -> int:
+    """使用 ffprobe 获取视频中的字幕流数量
+
+    Args:
+        input_file: 输入视频文件路径
+
+    Returns:
+        字幕流数量
+    """
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v", "error",
+                "-select_streams", "s",
+                "-show_entries", "stream=index",
+                "-of", "csv=p=0",
+                input_file,
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            creationflags=(
+                getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+            ),
+        )
+        output = result.stdout.strip()
+        if not output:
+            return 0
+        return len(output.split("\n"))
+    except Exception as e:
+        logger.warning(f"获取字幕流数量失败: {str(e)}，默认返回0")
+        return 0
+
+
 def add_subtitles(
     input_file: str,
     subtitle_file: str,
@@ -260,22 +296,28 @@ def add_subtitles(
             logger.info("WebM格式视频，强制使用硬字幕")
 
         if soft_subtitle:
-            # 添加软字幕
+            existing_subtitle_count = _get_subtitle_stream_count(input_file)
+            logger.info(f"检测到现有字幕流数量: {existing_subtitle_count}")
+            new_subtitle_index = existing_subtitle_count
             cmd = [
                 "ffmpeg",
-                "-i",
-                input_file,
-                "-i",
-                processed_subtitle,
-                "-c:v",
-                "copy",
-                "-c:a",
-                "copy",
-                "-c:s",
-                "mov_text",
+                "-i", input_file, # 输入 0
+                "-i", processed_subtitle, # 输入 1
+                "-map", "0", # 映射输入0的所有流
+                "-map", "1:s", # 映射输入1的字幕流
+                "-c:v", "copy", 
+                "-c:a", "copy",
+                "-c:s", "mov_text",
+            ]
+            # 清除所有旧字幕的 default disposition
+            for i in range(existing_subtitle_count):
+                cmd.extend([f"-disposition:s:{i}", "0"])
+            # 设置新字幕为 default 并命名
+            cmd.extend([
+                f"-disposition:s:{new_subtitle_index}", "default",
                 "-y",
                 output,
-            ]
+            ])
             logger.info(f"添加软字幕执行命令: {' '.join(cmd)}")
             try:
                 subprocess.run(
