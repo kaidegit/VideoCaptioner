@@ -27,6 +27,7 @@ venv/
 *.srt
 *.mp4
 *.exe
+*.jpg
 
 # 应用数据
 /AppData/
